@@ -1,73 +1,88 @@
-"""Optional LLM-driven agent loop."""
+"""Optional live LLM agent using the OpenAI Responses API."""
 
 from __future__ import annotations
 
 import json
 import os
+import urllib.error
 import urllib.request
 from typing import Any
 
 from tools import export_record, extract_fields, validate_record
 
 
-class LLMToolLoopAgent:
-    """Ask an LLM to choose the next tool, then execute that tool locally."""
+TOOLS = [
+    {"type": "function", "name": "extract_fields", "description": "Extract census fields from the submitted form.", "parameters": {"type": "object", "properties": {}, "additionalProperties": False}},
+    {"type": "function", "name": "validate_record", "description": "Validate the currently extracted census record.", "parameters": {"type": "object", "properties": {}, "additionalProperties": False}},
+    {"type": "function", "name": "export_record", "description": "Export the record only after validation finds no issues.", "parameters": {"type": "object", "properties": {}, "additionalProperties": False}},
+    {"type": "function", "name": "human_review", "description": "Route an uncertain or invalid record to a human reviewer.", "parameters": {"type": "object", "properties": {"reason": {"type": "string"}}, "required": ["reason"], "additionalProperties": False}},
+]
 
-    def __init__(self, max_steps: int = 5):
+
+class LLMToolLoopAgent:
+    """Let the model choose tools while Python executes them safely."""
+
+    def __init__(self, max_steps: int = 6):
         self.max_steps = max_steps
         self.api_key = os.environ.get("OPENAI_API_KEY")
-        self.model = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+        self.model = os.environ.get("OPENAI_MODEL", "gpt-5.5")
 
-    def ask_model(self, state: dict[str, Any]) -> dict[str, Any]:
+    def _request(self, input_items: list[dict[str, Any]]) -> dict[str, Any]:
         if not self.api_key:
-            raise RuntimeError("Set OPENAI_API_KEY to use live LLM mode; demo mode does not need one.")
+            raise RuntimeError("Set OPENAI_API_KEY to use live LLM mode. The standard demo does not need one.")
         payload = json.dumps({
             "model": self.model,
-            "temperature": 0,
-            "response_format": {"type": "json_object"},
-            "messages": [
-                {"role": "system", "content": "You are a cautious census data-entry agent. Return only valid JSON."},
-                {"role": "user", "content": (
-                    "Choose exactly one next action from extract, validate, export, or human_review. "
-                    "Never approve a record with validation errors. Return JSON with action and reason. "
-                    "Current state: " + json.dumps(state)
-                )},
-            ],
+            "instructions": (
+                "You are a cautious Boston census data-entry agent. Work toward a clean, database-ready record. "
+                "Use extract_fields first, then validate_record. Never export a record with validation issues. "
+                "When information is missing, ambiguous, or invalid, use human_review."
+            ),
+            "input": input_items,
+            "tools": TOOLS,
+            "store": False,
         }).encode()
-        request = urllib.request.Request(
-            "https://api.openai.com/v1/chat/completions",
-            data=payload,
-            headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
-            method="POST",
-        )
-        with urllib.request.urlopen(request, timeout=60) as response:
-            body = json.loads(response.read().decode())
-        return json.loads(body["choices"][0]["message"]["content"])
+        request = urllib.request.Request("https://api.openai.com/v1/responses", data=payload, headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}, method="POST")
+        try:
+            with urllib.request.urlopen(request, timeout=90) as response:
+                return json.loads(response.read().decode())
+        except urllib.error.HTTPError as error:
+            detail = error.read().decode(errors="replace")
+            raise RuntimeError(f"OpenAI API error {error.code}: {detail}") from error
 
     def run(self, form_text: str) -> dict[str, Any]:
         record: dict[str, Any] = {}
         issues: list[dict[str, str]] = []
         audit = []
-        state: dict[str, Any] = {"record": record, "issues": issues}
+        input_items: list[dict[str, Any]] = [{"role": "user", "content": "Process this census form:\n" + form_text}]
 
         for step in range(1, self.max_steps + 1):
-            decision = self.ask_model(state)
-            action = decision.get("action")
-            audit.append({"step": step, "tool": "llm_decision", "result": f"{action}: {decision.get('reason', '')}"})
+            response = self._request(input_items)
+            output_items = response.get("output", [])
+            input_items.extend(output_items)
+            calls = [item for item in output_items if item.get("type") == "function_call"]
+            if not calls:
+                return {"status": "needs_review", "record": export_record(record), "issues": issues, "audit": audit + [{"step": step, "tool": "llm", "result": "No tool call; routed to review"}]}
 
-            if action == "extract":
-                record = extract_fields(form_text)
-            elif action == "validate":
-                issues = validate_record(record)
-            elif action == "export":
-                if not issues:
-                    return {"status": "approved", "record": export_record(record), "issues": [], "audit": audit}
-                action = "human_review"
-            if action == "human_review":
-                return {"status": "needs_review", "record": export_record(record), "issues": issues, "audit": audit}
-
-            state = {"record": record, "issues": issues}
-            audit.append({"step": step, "tool": action, "result": "Tool executed"})
+            for call in calls:
+                name = call.get("name")
+                args = json.loads(call.get("arguments", "{}"))
+                audit.append({"step": step, "tool": name, "result": args.get("reason", "Model selected tool")})
+                if name == "extract_fields":
+                    record = extract_fields(form_text)
+                    tool_result = record
+                elif name == "validate_record":
+                    issues = validate_record(record)
+                    tool_result = {"issues": issues}
+                elif name == "export_record":
+                    if not issues:
+                        return {"status": "approved", "record": export_record(record), "issues": [], "audit": audit}
+                    name = "human_review"
+                    tool_result = {"status": "blocked", "reason": "Validation issues remain."}
+                elif name == "human_review":
+                    return {"status": "needs_review", "record": export_record(record), "issues": issues, "audit": audit}
+                else:
+                    tool_result = {"error": f"Unknown tool: {name}"}
+                input_items.append({"type": "function_call_output", "call_id": call["call_id"], "output": json.dumps(tool_result)})
 
         return {"status": "needs_review", "record": export_record(record), "issues": issues, "audit": audit}
 

@@ -79,6 +79,8 @@ The included three-form test set produced these results:
 
 The basic extraction completeness score was 100% for the fields present in the test set. This is a small demonstration, not evidence that the system is ready for production use.
 
+The live OpenAI agent was also tested on all three forms. It approved FORM-001 and routed FORM-002 and FORM-003 to human review, demonstrating that the model can use the extraction, validation, and export tools while respecting the safety rule against approving questionable records.
+
 ## Limitations and next steps
 
 - The current demo accepts digital transcriptions rather than directly reading handwriting or scanned images.

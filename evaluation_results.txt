@@ -13,3 +13,15 @@ Interpretation: The prototype correctly approved the clean record and
 prevented incomplete or invalid records from being silently accepted.
 
 This small demonstration does not establish production readiness.
+
+Live LLM-agent verification
+
+After configuring an OpenAI API key, the live tool-using agent was tested on
+the same three fictional forms:
+
+FORM-001: approved after extraction, validation, and export
+FORM-002: needs_review because the date of birth was UNKNOWN
+FORM-003: needs_review because 02/30/1985 is not a valid date
+
+The live agent demonstrated both routine automation and safe abstention when
+data is questionable.
