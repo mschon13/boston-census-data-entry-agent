@@ -16,6 +16,8 @@ The app accepts a digital transcription of a census form, extracts structured fi
 - An audit trail records which tools the agent used and why.
 - Approved records can be exported in a database-ready structure.
 
+The browser accepts `.txt`, `.csv`, and `.json` files without an API call. With live OpenAI mode enabled, it can also send `.pdf`, `.png`, `.jpg`, and `.jpeg` uploads to the model for document/image extraction. Blurry, handwritten, or incomplete forms are routed to human review rather than guessed.
+
 ## Run locally
 
 ```bash
@@ -83,7 +85,8 @@ The live OpenAI agent was also tested on all three forms. It approved FORM-001 a
 
 ## Limitations and next steps
 
-- The current demo accepts digital transcriptions rather than directly reading handwriting or scanned images.
+- PDF and image processing requires live OpenAI mode and an API key; the local no-key demo cannot interpret binary documents.
+- Handwriting and poor-quality scans may still require human review.
 - The sample size is intentionally small and uses fictional data.
 - A production system would require OCR, security review, privacy protections, accessibility testing, integration with approved databases, and much larger validation datasets.
 - The agent should remain human-in-the-loop for ambiguous records.
