@@ -25,3 +25,12 @@ FORM-003: needs_review because 02/30/1985 is not a valid date
 
 The live agent demonstrated both routine automation and safe abstention when
 data is questionable.
+
+File-format verification
+
+The live agent also processed the included fictional form in two additional formats:
+
+FORM-001.png: approved after image analysis, extraction, and validation
+FORM-001.pdf: approved after document analysis, extraction, and validation
+
+No real resident information was used.

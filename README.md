@@ -83,6 +83,8 @@ The basic extraction completeness score was 100% for the fields present in the t
 
 The live OpenAI agent was also tested on all three forms. It approved FORM-001 and routed FORM-002 and FORM-003 to human review, demonstrating that the model can use the extraction, validation, and export tools while respecting the safety rule against approving questionable records.
 
+The live agent also successfully processed the included fictional FORM-001 as both a PNG image and a PDF document, extracting the same structured record and approving it after validation.
+
 ## Limitations and next steps
 
 - PDF and image processing requires live OpenAI mode and an API key; the local no-key demo cannot interpret binary documents.
