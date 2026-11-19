@@ -16,6 +16,8 @@ The app accepts a digital transcription of a census form, extracts structured fi
 - An audit trail records which tools the agent used and why.
 - Approved records can be exported in a database-ready structure.
 
+The app also supports selecting multiple files at once. It processes each file independently, preserves the source filename, summarizes which records need review, and creates one consolidated `boston_census_master.csv` export. The export is a prototype database-ready file; it does not directly connect to or upload into a government database.
+
 The browser accepts `.txt`, `.csv`, and `.json` files without an API call. With live OpenAI mode enabled, it can also send `.pdf`, `.png`, `.jpg`, and `.jpeg` uploads to the model for document/image extraction. Blurry, handwritten, or incomplete forms are routed to human review rather than guessed.
 
 ## Run locally
@@ -32,7 +34,7 @@ The project follows Simon Willison's definition: “An LLM agent runs tools in a
 
 **Goal:** Convert a census form into an accurate, structured record while minimizing manual data entry.
 
-**Tools:** Field extraction, validation, duplicate checking, human-review routing, and record export.
+**Tools:** File-type inspection, field extraction, validation, duplicate checking, human-review routing, batch processing, and master-record export.
 
 **Loop:** Extract → validate → decide whether to approve or route to review → export only safe records.
 
@@ -92,4 +94,5 @@ The live agent also successfully processed the included fictional FORM-001 as bo
 - The sample size is intentionally small and uses fictional data.
 - A production system would require OCR, security review, privacy protections, accessibility testing, integration with approved databases, and much larger validation datasets.
 - The agent should remain human-in-the-loop for ambiguous records.
+- A production deployment would need an approved state-database interface or import specification before automating final submission.
 

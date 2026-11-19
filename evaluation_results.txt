@@ -34,3 +34,9 @@ FORM-001.png: approved after image analysis, extraction, and validation
 FORM-001.pdf: approved after document analysis, extraction, and validation
 
 No real resident information was used.
+
+Batch verification
+
+The local batch endpoint successfully processed FORM-001.txt and FORM-002.csv
+in one submission and generated a consolidated boston_census_master.csv file
+with source filenames, statuses, extracted fields, and review issues.

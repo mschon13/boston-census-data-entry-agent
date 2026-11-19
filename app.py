@@ -5,12 +5,14 @@ from __future__ import annotations
 import html
 import json
 import base64
+from urllib.parse import quote
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs
 
 from agent import CensusEntryAgent
 from llm_agent import LLMToolLoopAgent
+from batch import add_cross_file_checks, master_csv, process_file
 
 FORMS = json.loads((Path(__file__).parent / "sample_data" / "forms.json").read_text())
 
@@ -21,10 +23,10 @@ def page(message: str = "") -> str:
     form_map = json.dumps({f["id"]: f["text"] for f in FORMS}).replace("</", "<\\/")
     return f"""<!doctype html><html><head><meta charset="utf-8"><title>Boston Census Data Entry Agent</title>
 <style>body{{font-family:Arial,sans-serif;max-width:1000px;margin:40px auto;padding:0 20px;color:#202938}}textarea{{width:100%;height:180px;font-family:monospace}}button{{background:#154734;color:white;border:0;padding:12px 18px;border-radius:5px;cursor:pointer}}select{{padding:8px}}.card{{border:1px solid #d5d9df;border-radius:8px;padding:18px;margin:18px 0}}.ok{{color:#176b3a}}.warn{{color:#9a5b00}}.bad{{color:#a32626}}pre{{white-space:pre-wrap;background:#f5f6f8;padding:14px;border-radius:5px}}table{{border-collapse:collapse;width:100%}}td,th{{border:1px solid #ddd;padding:8px;text-align:left}}</style>
-<script>const forms={form_map};function loadForm(){{document.getElementById('formtext').value=forms[document.getElementById('formid').value];}}function readFile(){{const f=document.getElementById('upload').files[0];if(f&&!f.type.startsWith('image/')&&f.type!=='application/pdf'){{const r=new FileReader();r.onload=()=>document.getElementById('formtext').value=r.result;r.readAsText(f);}}else if(f){{document.getElementById('formtext').value='Binary file selected: '+f.name+'. Check live OpenAI mode to process it.';}}}}async function submitEntry(event){{const f=document.getElementById('upload').files[0];if(!f||(!f.type.startsWith('image/')&&f.type!=='application/pdf'))return;event.preventDefault();const live=document.querySelector('input[name=live_llm]').checked;if(!live){{alert('PDF and image files require live OpenAI mode.');return;}}const reader=new FileReader();reader.onload=async()=>{{const response=await fetch('/process',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{filename:f.name,mime_type:f.type,data_url:reader.result,live_llm:true}})}});document.open();document.write(await response.text());document.close();}};reader.readAsDataURL(f);}}</script>
+<script>const forms={form_map};function loadForm(){{document.getElementById('formtext').value=forms[document.getElementById('formid').value];}}function readFile(){{const f=document.getElementById('upload').files[0];if(f&&!f.type.startsWith('image/')&&f.type!=='application/pdf'){{const r=new FileReader();r.onload=()=>document.getElementById('formtext').value=r.result;r.readAsText(f);}}else if(f){{document.getElementById('formtext').value='Binary file selected: '+f.name+'. Check live OpenAI mode to process it.';}}}}async function submitEntry(event){{const files=[...document.getElementById('upload').files];if(!files.length)return;event.preventDefault();const live=document.querySelector('input[name=live_llm]').checked;const items=await Promise.all(files.map(f=>new Promise(resolve=>{{const reader=new FileReader();reader.onload=()=>resolve({{filename:f.name,mime_type:f.type,data_url:reader.result}});reader.readAsDataURL(f);}})));const response=await fetch('/process',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{files:items,live_llm:live}})}});document.open();document.write(await response.text());document.close();}}</script>
 </head><body><h1>Boston Census Data Entry Agent</h1><p><em>Educational prototype using fictional census records only.</em></p>
 <div class="card"><label for="formid">Choose a sample form:</label> <select id="formid" onchange="loadForm()">{options}</select>
-<p>Upload <strong>.txt</strong>, <strong>.csv</strong>, <strong>.json</strong>, <strong>.pdf</strong>, <strong>.png</strong>, or <strong>.jpg</strong> files:</p><input type="file" id="upload" accept=".txt,.csv,.json,.pdf,.png,.jpg,.jpeg" onchange="readFile()">
+<p>Upload one or many <strong>.txt</strong>, <strong>.csv</strong>, <strong>.json</strong>, <strong>.pdf</strong>, <strong>.png</strong>, or <strong>.jpg</strong> files:</p><input type="file" id="upload" multiple accept=".txt,.csv,.json,.pdf,.png,.jpg,.jpeg" onchange="readFile()">
 <form id="entryform" method="post" action="/process" onsubmit="submitEntry(event)"><textarea id="formtext" name="formtext">{default_text}</textarea><br><label><input type="checkbox" name="live_llm" value="yes"> Use live OpenAI agent (required for PDF/image files)</label><br><br><button>Run census entry agent</button></form></div>
 {message}<div class="card"><h2>What this prototype demonstrates</h2><p>The agent extracts fields, validates them, records its tool calls, and safely routes uncertain or invalid records to human review.</p></div>
 </body></html>"""
@@ -43,6 +45,12 @@ def render_result(result: dict) -> str:
     return f"<div class='card'><h2 class='{css}'>Status: {html.escape(status)}</h2><h3>Extracted record</h3><pre>{record_json}</pre><h3>Validation issues</h3>{issues}<h3>Agent audit trail</h3>{audit}</div>"
 
 
+def render_batch(results: list[dict]) -> str:
+    rows = "".join(f"<tr><td>{html.escape(item['filename'])}</td><td>{html.escape(item['result'].get('status', ''))}</td><td>{len(item['result'].get('issues', []))}</td></tr>" for item in results)
+    csv_data = quote(master_csv(results))
+    return f"<div class='card'><h2>Batch complete</h2><p>Processed {len(results)} file(s). Review any rows marked <strong>needs_review</strong> before using the export.</p><table><tr><th>Source file</th><th>Status</th><th>Issues</th></tr>{rows}</table><p><a download='boston_census_master.csv' href='data:text/csv;charset=utf-8,{csv_data}'>Download master CSV</a></p></div>"
+
+
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -55,6 +63,20 @@ class Handler(BaseHTTPRequestHandler):
         raw_body = self.rfile.read(length)
         if self.headers.get("Content-Type", "").startswith("application/json"):
             payload = json.loads(raw_body.decode())
+            if "files" in payload:
+                results = []
+                for file_item in payload["files"]:
+                    try:
+                        result = process_file(file_item, bool(payload.get("live_llm")))
+                    except Exception as error:
+                        result = {"status": "needs_review", "record": {}, "issues": [{"field": "agent", "severity": "error", "message": str(error)}], "audit": []}
+                    results.append({"filename": file_item.get("filename", "upload"), "result": result})
+                add_cross_file_checks(results)
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.end_headers()
+                self.wfile.write(page(render_batch(results)).encode())
+                return
             mime_type = payload.get("mime_type", "")
             live_llm = payload.get("live_llm", False)
             if mime_type in {"application/pdf"} or mime_type.startswith("image/"):
