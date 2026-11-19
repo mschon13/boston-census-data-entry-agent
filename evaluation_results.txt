@@ -1,0 +1,15 @@
+Boston Census Data Entry Agent - Initial Evaluation
+
+Test set: 3 fictional census-form transcriptions
+
+FORM-001: status=approved, issues=0
+FORM-002: status=ready_for_review, issues=1
+FORM-003: status=needs_review, issues=1
+
+Basic extraction completeness: 9/9 (100%)
+Validation issues surfaced for review: 2
+
+Interpretation: The prototype correctly approved the clean record and
+prevented incomplete or invalid records from being silently accepted.
+
+This small demonstration does not establish production readiness.
